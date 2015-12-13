@@ -5,10 +5,99 @@ require 'ostruct'
 require 'fileutils'
 require 'pry'
 
-class Keyswitch
+class BackupFailure < StandardError
+end
+
+class KeyBase
 
   BASE_DIR = File.join(Dir.home,'.ssh')
-  AVAILABLE_LOCALES = Dir.glob(File.join(BASE_DIR,'*')).map {|f| File.directory?(f) ? f.split('/').last : nil}.compact
+  AVAILABLE_COMPANIES = Dir.glob(File.join(BASE_DIR,'*')).map {|f| File.directory?(f) ? f.split('/').last : nil}.compact
+
+  attr_reader :logger
+
+  def initialize
+    @logger = Logger.new STDOUT
+    @logger.level = :warn
+  end
+
+  def make_active company
+    backup_active_files
+    remove_active
+    move_id_to_active company
+  end
+
+  def move_id_to_active company
+    source_folder = File.join(BASE_DIR, company, '/')
+    source_files = Dir.glob(File.join(source_folder,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
+    if verbose
+      logger.info  'SOURCE FILES'
+      source_files.each {|f| logger.info f}
+    end
+
+    source_files.each do |file|
+      logger.info "Copying #{file}"
+      FileUtils.cp file, BASE_DIR
+    end
+
+    logger.warn "Switched to #{id}"
+  end
+
+  def active_files
+    Dir.glob(File.join(BASE_DIR,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
+  end
+
+  def backup_active_files
+    active_files.each do |file|
+      logger.info "Backing up #{file}"
+      FileUtils.cp file, backup_folder
+    end
+  end
+
+  def remove_active
+    verify_backup
+    active_files.each do |file|
+      logger.info "Removing #{file}"
+      FileUtils.rm file
+    end
+  end
+
+  def backup_folder
+    backup_folder = File.join(BASE_DIR, 'hold', '/')
+  end
+
+  def insure_backup_folder
+    FileUtils.rm_r backup_folder
+    Dir.mkdir backup_folder
+  end
+
+  def backed_up_files
+    Dir.glob(File.join(backup_folder,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
+  end
+
+  def backed_up_file_names
+    backed_up_files.map{|file| file.split('/').last}
+  end
+
+  def active_file_names
+    active_files.map{|file| file.split('/').last}
+  end
+
+  def active_is_backed_up?
+    active_files_not_backed_up.empty?
+  end
+
+  def active_files_not_backed_up
+    active_file_names - backed_up_file_names
+  end
+
+  def verify_backup
+    raise BackupFailure, "Backup failed to backup #{active_files_not_backed_up}" unless active_is_backed_up?
+  end
+end
+
+class Keyswitch
+
+  keybase = Keybase.new
 
   def self.parse args
     options = OpenStruct.new
@@ -20,64 +109,14 @@ class Keyswitch
       opts.separator ""
       opts.separator "Specific options:"
 
-      opts.on('-i', '--id KEYBASE', AVAILABLE_LOCALES, 'Name of KEYBASE to switch to') do |id|
-        options.locale = id
-        puts "Switching keys to #{id}"
-        # copy that keybase over
-        backup_folder = File.join(BASE_DIR, 'hold', '/')
-        FileUtils.rm_r backup_folder
-        Dir.mkdir backup_folder
-
-        active_files = Dir.glob(File.join(BASE_DIR,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
-        source_folder = File.join(BASE_DIR, id, '/')
-        source_files = Dir.glob(File.join(source_folder,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
-        if options.verbose
-        puts 'SOURCE'
-        source_files.each {|f| puts f}
-        puts 'SOURCE'
-        end
-
-
-        active_files.each do |file|
-          puts "Backing up #{file}" if options.verbose
-          FileUtils.cp file, backup_folder
-        end
-
-        active = active_files.map{|file| file.split('/').last}
-
-        backed_up_files = Dir.glob(File.join(backup_folder,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
-        backed_up = backed_up_files.map{|file| file.split('/').last}
-
-        unless (active == backed_up)
-          if options.verbose
-            puts 'backup failure stats'
-            puts 'active---------------'
-            puts active
-            puts 'backed up ---------------'
-            puts backed_up
-            puts 'difference 1'
-            puts active - backed_up
-            puts 'difference 2'
-            puts backed_up - active
-          end
-          raise 'Backup failure'
-        end
-
-        puts "back up success"
-        active_files.each do |file|
-          puts "Removing #{file}" if options.verbose
-          FileUtils.rm file
-        end
-
-        source_files.each do |file|
-          puts "Copying #{file}" if options.verbose
-          FileUtils.cp file, BASE_DIR
-        end
-        puts "Switched to #{id}"
+      opts.on('-i', '--id KEYBASE', Keybase::AVAILABLE_COMPANIES, 'Name of KEYBASE to switch to') do |id|
+        options.company = company
+        keybase.make_active company
+        puts "#{id} keys are now active"
       end
 
       opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
-        options.verbose = v
+        keybase.verbose = options.verbose = v
       end
 
       opts.separator ""
