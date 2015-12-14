@@ -4,20 +4,22 @@ require 'optparse'
 require 'ostruct'
 require 'fileutils'
 require 'pry'
+require 'logger'
 
 class BackupFailure < StandardError
 end
 
-class KeyBase
+class Keybase
 
   BASE_DIR = File.join(Dir.home,'.ssh')
   AVAILABLE_COMPANIES = Dir.glob(File.join(BASE_DIR,'*')).map {|f| File.directory?(f) ? f.split('/').last : nil}.compact
 
-  attr_reader :logger
+  attr_accessor :logger
 
   def initialize
     @logger = Logger.new STDOUT
-    @logger.level = :warn
+    @logger.level = Logger::WARN
+    @logger.info  'SOURCE FILES'
   end
 
   def make_active company
@@ -29,17 +31,15 @@ class KeyBase
   def move_id_to_active company
     source_folder = File.join(BASE_DIR, company, '/')
     source_files = Dir.glob(File.join(source_folder,'*')).map {|f| File.directory?(f) ? nil : f.to_s}.compact.sort
-    if verbose
-      logger.info  'SOURCE FILES'
-      source_files.each {|f| logger.info f}
-    end
+    logger.info  'SOURCE FILES'
+    source_files.each {|f| logger.info f}
 
     source_files.each do |file|
       logger.info "Copying #{file}"
       FileUtils.cp file, BASE_DIR
     end
 
-    logger.warn "Switched to #{id}"
+    logger.warn "Switched to #{company}"
   end
 
   def active_files
@@ -97,26 +97,27 @@ end
 
 class Keyswitch
 
-  keybase = Keybase.new
 
   def self.parse args
     options = OpenStruct.new
     options.verbose = false
 
     opt_parser = OptionParser.new do |opts|
+      keybase = Keybase.new
       opts.banner = "Usage: example.rb [options]"
 
       opts.separator ""
       opts.separator "Specific options:"
 
       opts.on('-i', '--id KEYBASE', Keybase::AVAILABLE_COMPANIES, 'Name of KEYBASE to switch to') do |id|
-        options.company = company
-        keybase.make_active company
+        options.company = id
+        keybase.make_active id
         puts "#{id} keys are now active"
       end
 
       opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
-        keybase.verbose = options.verbose = v
+        # TODO: Set logger level in Keybase
+        # keybase.logger.level Logger::INFO
       end
 
       opts.separator ""
